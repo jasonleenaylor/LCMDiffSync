@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.3.32901.215
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffSync", "DiffSync\DiffSync.csproj", "{73060757-4ABA-4DFA-B935-686D040B5BB1}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DiffSync", "DiffSync\DiffSync.csproj", "{73060757-4ABA-4DFA-B935-686D040B5BB1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiffSync.Tests", "DiffSync.Tests\DiffSync.Tests.csproj", "{5CAF475A-9A5C-45E5-8712-041599F3C304}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DiffSync.Tests", "DiffSync.Tests\DiffSync.Tests.csproj", "{5CAF475A-9A5C-45E5-8712-041599F3C304}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

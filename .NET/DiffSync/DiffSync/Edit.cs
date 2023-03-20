@@ -9,5 +9,6 @@ namespace DiffSync
 		public JToken Diff { get; set; }
 		public long ClientVersion { get; set; }
 		public Guid ClientId { get; set; }
+		public Guid ServerId { get; set; }
 	}
 }
