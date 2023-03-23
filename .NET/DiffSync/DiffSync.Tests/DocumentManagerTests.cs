@@ -7,16 +7,18 @@ namespace DiffSync
 {
 	public class DocumentManagerTests
 	{
-		Mock<IChangeCommunicator> mockCommunicator = new();
+		Mock<IClientToServerCommunicator> mockClientServerCommunicator = new();
+		Mock<IServerToClientCommunicator> mockServerClientCommunicator = new();
 		JsonDiffPatch diffPatcher = new JsonDiffPatch(new Options { MinEfficientTextDiffLength = 2 });
 
 		[SetUp]
 		public void Setup()
 		{
-			mockCommunicator.Invocations.Clear();
+			mockClientServerCommunicator.Invocations.Clear();
+			mockServerClientCommunicator.Invocations.Clear();
 		}
 
-		private Queue<IDocumentAction> GenerateTestEditStack(JObject?[] originals,
+		private Queue<IDocumentAction> GenerateTestEditQueue(JObject?[] originals,
 			JObject[] updates,
 			long clientVersion,
 			long serverVersion,
@@ -28,15 +30,25 @@ namespace DiffSync
 			for (var i = 0; i < originals.Length; i++, clientVersion++)
 			{
 				editStack.Enqueue(new Edit
-				{
-					Diff = diffPatcher.Diff(originals[i], updates[i]),
-					ClientVersion = clientVersion,
-					ServerVersion = serverVersion,
-					ServerId = serverGuid,
-					ClientId = clientGuid
-				});
+					(clientGuid, serverGuid, clientVersion, serverVersion, diffPatcher.Diff(originals[i], updates[i])));
 			}
 			return editStack;
+		}
+		private Queue<IDocumentAction> GenerateTestReset(JObject? content,
+			long clientVersion,
+			long serverVersion,
+			Guid serverGuid, Guid clientGuid)
+		{
+			var actions = new Queue<IDocumentAction>();
+			actions.Enqueue(new Reset(clientGuid, serverGuid, clientVersion, serverVersion, (JObject)content.DeepClone()));
+			return actions;
+		}
+
+		private Queue<IDocumentAction> GenerateClientAck(Guid clientId, Guid serverId, long clientVersion)
+		{
+			var actions = new Queue<IDocumentAction>();
+			actions.Enqueue(new ClientAck(clientId, serverId, clientVersion));
+			return actions;
 		}
 
 		[Test]
@@ -45,7 +57,7 @@ namespace DiffSync
 			var catContent = "{'string':'cougar'}";
 			var testDoc = new ClientDocumentManager();
 			// SUT
-			testDoc.InitializeServer(JObject.Parse(catContent), mockCommunicator.Object, Guid.NewGuid());
+			testDoc.InitializeServer(JObject.Parse(catContent), mockServerClientCommunicator.Object, Guid.NewGuid());
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(0)); // No shadows created until clients are added
 			Assert.That(diffPatcher.Diff(testDoc.Content, JObject.Parse(catContent)), Is.Null);
 		}
@@ -55,7 +67,7 @@ namespace DiffSync
 		{
 			var catContent = "{'string':'cougar'}";
 			var serverDoc = new ClientDocumentManager();
-			serverDoc.InitializeServer(JObject.Parse(catContent), mockCommunicator.Object, Guid.NewGuid());
+			serverDoc.InitializeServer(JObject.Parse(catContent), mockServerClientCommunicator.Object, Guid.NewGuid());
 			var clientGuid = Guid.NewGuid();
 			// SUT
 			serverDoc.SyncClient(clientGuid);
@@ -63,8 +75,29 @@ namespace DiffSync
 			var shadow = serverDoc.GetShadow(clientGuid);
 			Assert.That(shadow.ClientVersion, Is.EqualTo(0));
 			Assert.That(shadow.ServerVersion, Is.EqualTo(0));
-			mockCommunicator.Verify(x=>x.SendEdits(
+			mockServerClientCommunicator.Verify(x=>x.SendServerEdits(
 				It.Is<Queue<IDocumentAction>>(s => s.Count == 1)), Times.Once);
+		}
+
+		[Test]
+		public void ServerHasNoChangesClientSentAck()
+		{
+			var catContent = JObject.Parse("{'string':'cougar'}");
+			var testDoc = new ClientDocumentManager();
+			var serverGuid = Guid.NewGuid();
+			// SUT
+			testDoc.InitializeServer(catContent, mockServerClientCommunicator.Object, serverGuid);
+			Assert.That(testDoc.GetClientCount(), Is.EqualTo(0)); // No shadows created until clients are added
+			Assert.That(diffPatcher.Diff(testDoc.Content, catContent), Is.Null);
+			var clientGuid = Guid.NewGuid();
+			testDoc.SyncClient(clientGuid);
+			var clientEditStack =
+				GenerateTestEditQueue(new[] { catContent }, new[] { JObject.Parse("{'string':'cougars'}") }, 0, 0, serverGuid, clientGuid);
+			mockServerClientCommunicator.Invocations.Clear();
+			testDoc.ApplyRemoteChangesToServer(clientEditStack);
+			Assert.That(testDoc.GetClientCount(), Is.EqualTo(1));
+			Assert.That(testDoc.GetShadow(clientGuid).ServerVersion, Is.EqualTo(0));
+			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Queue<IDocumentAction>>(s => ((IClientChangeAck)s.Peek()).ClientVersion == 0)), Times.Once);
 		}
 
 		[Test]
@@ -74,19 +107,19 @@ namespace DiffSync
 			var testDoc = new ClientDocumentManager();
 			var serverGuid = Guid.NewGuid();
 			// SUT
-			testDoc.InitializeServer(catContent, mockCommunicator.Object, serverGuid);
+			testDoc.InitializeServer(catContent, mockServerClientCommunicator.Object, serverGuid);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(0)); // No shadows created until clients are added
 			Assert.That(diffPatcher.Diff(testDoc.Content, catContent), Is.Null);
 			var clientGuid = Guid.NewGuid();
 			testDoc.SyncClient(clientGuid);
 			var clientEditStack =
-				GenerateTestEditStack(new []{catContent}, new []{JObject.Parse("{'string':'cougars'}")}, 0, 0, serverGuid, clientGuid);
+				GenerateTestEditQueue(new []{catContent}, new []{JObject.Parse("{'string':'cougars'}")}, 0, 0, serverGuid, clientGuid);
 			testDoc.Content["string"] = "My cat";
-			mockCommunicator.Invocations.Clear();
+			mockServerClientCommunicator.Invocations.Clear();
 			testDoc.ApplyRemoteChangesToServer(clientEditStack);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(1));
 			Assert.That(testDoc.GetShadow(clientGuid).ServerVersion, Is.EqualTo(1));
-			mockCommunicator.Verify(x => x.SendEdits(It.Is<Queue<IDocumentAction>>(s => s.Peek().ServerVersion == 0)), Times.Once);
+			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Queue<IDocumentAction>>(s => ((IEdit)s.Peek()).ServerVersion == 0)), Times.Once);
 		}
 
 		[Test]
@@ -96,32 +129,32 @@ namespace DiffSync
 			var testDoc = new ClientDocumentManager();
 			var serverGuid = Guid.NewGuid();
 			// SUT
-			testDoc.InitializeServer(catContent, mockCommunicator.Object, serverGuid);
+			testDoc.InitializeServer(catContent, mockServerClientCommunicator.Object, serverGuid);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(0)); // No shadows created until clients are added
 			Assert.That(diffPatcher.Diff(testDoc.Content, catContent), Is.Null);
 			var clientGuid = Guid.NewGuid();
 			testDoc.SyncClient(clientGuid);
 			// At this point the server has the original content in an edit stack for the client
 			var clientEditStack =
-				GenerateTestEditStack(new[] { catContent},
+				GenerateTestEditQueue(new[] { catContent},
 					new []{ JObject.Parse("{'string':'cougars'}")},
 					0, 0, serverGuid, clientGuid);
 			testDoc.Content["string"] = "My cougar";
-			mockCommunicator.Invocations.Clear();
+			mockServerClientCommunicator.Invocations.Clear();
 			testDoc.ApplyRemoteChangesToServer(clientEditStack);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(1));
 			Assert.That(testDoc.GetShadow(clientGuid).ServerVersion, Is.EqualTo(1));
-			mockCommunicator.Verify(x => x.SendEdits(It.Is<Queue<IDocumentAction>>(s => s.Peek().ServerVersion == 0)), Times.Once);
-			mockCommunicator.Invocations.Clear();
+			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Queue<IDocumentAction>>(s => ((IEdit)s.Peek()).ServerVersion == 0)), Times.Once);
+			mockServerClientCommunicator.Invocations.Clear();
 			// Simulate dropped packet from server
 			var clientEditStack2 =
-				GenerateTestEditStack(new[] { catContent, JObject.Parse("{'string':'cougars'}") },
+				GenerateTestEditQueue(new[] { catContent, JObject.Parse("{'string':'cougars'}") },
 					new[] { JObject.Parse("{'string':'cougars'}"), JObject.Parse("{'string':'cougars!'}") },
 					0, 0, serverGuid, clientGuid);
 			testDoc.ApplyRemoteChangesToServer(clientEditStack2);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(1));
 			Assert.That(testDoc.GetShadow(clientGuid).ServerVersion, Is.EqualTo(1));
-			mockCommunicator.Verify(x => x.SendEdits(It.Is<Queue<IDocumentAction>>(s => s.Count == 1 && s.Peek().ServerVersion == 0)), Times.Once);
+			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Queue<IDocumentAction>>(s => s.Count == 1 && ((IEdit)s.Peek()).ServerVersion == 0)), Times.Once);
 		}
 
 		[Test]
@@ -132,16 +165,15 @@ namespace DiffSync
 			Guid serverId = Guid.NewGuid();
 			var testDoc = new ServerDocumentManager();
 			// Set up our mock remote call to directly call the client method which would result from the server activity
-			mockCommunicator.Setup(x => x.RequestDump(It.IsAny<Guid>())).Callback((Guid guid) =>
+			mockClientServerCommunicator.Setup(x => x.RequestDump(It.IsAny<Guid>())).Callback((Guid guid) =>
 			{
 				var editStack = new Queue<IDocumentAction>();
-				editStack.Enqueue(new Edit { ClientId = guid, ServerId = serverId, ClientVersion = 0, Diff = diffPatcher.Diff(null, JObject.Parse(catContent)), ServerVersion = serverVersion });
+				editStack.Enqueue(new Reset(guid, serverId, 0, serverVersion, JObject.Parse(catContent)));
 				testDoc.ApplyRemoteChangesToClient(editStack);
 			});
-			var clientId = Guid.NewGuid();
 			// SUT
-			testDoc.InitFromServer(mockCommunicator.Object, clientId);
-			mockCommunicator.Verify((x => x.RequestDump(It.IsAny<Guid>())), Times.Once);
+			testDoc.InitFromServer(mockClientServerCommunicator.Object, testDoc.Guid);
+			mockClientServerCommunicator.Verify((x => x.RequestDump(It.IsAny<Guid>())), Times.Once);
 			Assert.That(testDoc.Content, Is.EqualTo(JObject.Parse(catContent)));
 			var shadow = testDoc.GetShadow(serverId);
 			Assert.That(shadow.ClientVersion, Is.EqualTo(0));
@@ -155,9 +187,9 @@ namespace DiffSync
 			var testJson = JObject.Parse("{string: 'cougar'}");
 			var testDoc = new ServerDocumentManager();
 			Guid serverGuid = Guid.NewGuid();
-			testDoc.InitFromServer(mockCommunicator.Object, new Guid());
+			testDoc.InitFromServer(mockClientServerCommunicator.Object, testDoc.Guid);
 			// make edit stack to simulate the server sending edits to the client
-			var serverEdits = GenerateTestEditStack(new JObject?[]{null}, new []{testJson}, 0, 0, serverGuid, Guid.Empty);
+			var serverEdits = GenerateTestEditQueue(new JObject?[]{null}, new []{testJson}, 0, 0, serverGuid, testDoc.Guid);
 			testDoc.ApplyRemoteChangesToClient(serverEdits);
 			var shadow = testDoc.GetShadow(serverGuid);
 			Assert.That(shadow, Is.Not.Null);
@@ -175,13 +207,18 @@ namespace DiffSync
 			var testJson = JObject.Parse("{string: 'cougar'}");
 			var testDoc = new ServerDocumentManager();
 			Guid serverGuid = Guid.NewGuid();
-			testDoc.InitFromServer(mockCommunicator.Object, new Guid());
-			testDoc.ApplyRemoteChangesToClient(GenerateTestEditStack(new JObject?[] { null }, new[] { testJson }, 0, 0, serverGuid, Guid.Empty));
+			testDoc.InitFromServer(mockClientServerCommunicator.Object, testDoc.Guid);
+			testDoc.ApplyRemoteChangesToClient(GenerateTestReset(testJson, 0, 0, serverGuid, testDoc.Guid));
 			Assert.That(testDoc.GetShadow(serverGuid).ClientVersion, Is.EqualTo(0));
+			mockClientServerCommunicator.Verify(x => x.SendClientEdits(
+					It.Is<Queue<IDocumentAction>>(x => x.Count == 1 && x.Peek() is ServerAck)),
+				Times.Once);
+			testDoc.ApplyRemoteChangesToClient(GenerateClientAck(testDoc.Guid, serverGuid, 0));
+			mockClientServerCommunicator.Invocations.Clear();
 			testJson["string"] = "cougars";
 			testDoc.ApplyLocalChange();
 			Assert.That(testDoc.GetShadow(serverGuid).ClientVersion, Is.EqualTo(1));
-			mockCommunicator.Verify(x => x.SendEdits(
+			mockClientServerCommunicator.Verify(x => x.SendClientEdits(
 				It.Is<Queue<IDocumentAction>>(x => x.Count == 1 && ((IEdit)x.Peek()).ClientVersion == 0)),
 				Times.Once);
 		}
@@ -192,14 +229,15 @@ namespace DiffSync
 			var testJson = JObject.Parse("{string: 'cougar'}");
 			var testDoc = new ServerDocumentManager();
 			Guid serverGuid = Guid.NewGuid();
-			testDoc.InitFromServer(mockCommunicator.Object, new Guid());
-			testDoc.ApplyRemoteChangesToClient(GenerateTestEditStack(new JObject?[] { null }, new[] { testJson }, 0, 0, serverGuid, Guid.Empty));
+			testDoc.InitFromServer(mockClientServerCommunicator.Object, testDoc.Guid);
+			testDoc.ApplyRemoteChangesToClient(GenerateTestEditQueue(new JObject?[] { null }, new[] { testJson }, 0, 0, serverGuid, testDoc.Guid));
 			testJson["string"] = "cougars";
 			testDoc.ApplyLocalChange();
 			testJson["string"] = "cougars!";
-			mockCommunicator.Reset();
+			mockClientServerCommunicator.Reset();
 			testDoc.ApplyLocalChange();
-			mockCommunicator.Verify(x => x.SendEdits(It.Is<Queue<IDocumentAction>>(s => s.Count == 2)), Times.Once);
+			// One Server acknowledgement followed by two edits
+			mockClientServerCommunicator.Verify(x => x.SendClientEdits(It.Is<Queue<IDocumentAction>>(s => s.Count == 3)), Times.Once);
 		}
 
 	}

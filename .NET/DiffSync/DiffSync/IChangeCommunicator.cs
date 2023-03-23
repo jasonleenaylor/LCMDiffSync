@@ -4,10 +4,14 @@ using Newtonsoft.Json.Linq;
 
 namespace DiffSync
 {
-	public interface IChangeCommunicator
+	public interface IClientToServerCommunicator
 	{
-		Guid RemoteGuid { get; }
-		void SendEdits(Queue<IDocumentAction> edits);
+		void SendClientEdits(Queue<IDocumentAction> edits);
 		void RequestDump(Guid clientGuid);
+	}
+
+	public interface IServerToClientCommunicator
+	{
+		void SendServerEdits(Queue<IDocumentAction> edits);
 	}
 }

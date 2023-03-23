@@ -4,10 +4,17 @@ namespace DiffSync
 {
 	public interface IDocumentAction
 	{
-		long ServerVersion { get; }
 		Guid ClientId { get; }
 
 		Guid ServerId { get; }
+	}
+
+	public interface IClientChangeAck : IDocumentAction
+	{
 		long ClientVersion { get; }
+	}
+	public interface IServerChangeAck : IDocumentAction
+	{
+		long ServerVersion { get; }
 	}
 }

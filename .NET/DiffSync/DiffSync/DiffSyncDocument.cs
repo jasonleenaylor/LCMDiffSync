@@ -2,21 +2,21 @@
 
 namespace DiffSync
 {
-	internal class DiffSyncDocument
+	public class DiffSyncDocument
 	{
 		public VersionedDocument Shadow;
 		public VersionedDocument Backup;
-		public Queue<IDocumentAction> Edits;
+		public Queue<IDocumentAction> DocActions;
 
 		public DiffSyncDocument(): this(new VersionedDocument(), new VersionedDocument(), new Queue<IDocumentAction>())
 		{
 		}
 
-		public DiffSyncDocument(VersionedDocument shadow, VersionedDocument backup, Queue<IDocumentAction> edits)
+		public DiffSyncDocument(VersionedDocument shadow, VersionedDocument backup, Queue<IDocumentAction> docActions)
 		{
 			Shadow = shadow;
 			Backup = backup;
-			Edits = edits;
+			DocActions = docActions;
 		}
 	}
 }
