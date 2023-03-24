@@ -2,8 +2,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using JsonDiffPatchDotNet;
-using Newtonsoft.Json.Linq;
 
 namespace DiffSync
 {
@@ -12,12 +10,11 @@ namespace DiffSync
 	/// </summary>
 	public class ServerDocumentManager
 	{
-		private JsonDiffPatch _differPatcher = new JsonDiffPatch(new Options { MinEfficientTextDiffLength = 2 });
 		public DiffSyncDocument? _serverDocument;
 		private IClientToServerCommunicator _changeCommunicator;
 		private Guid _localId = Guid.NewGuid();
 		private long _localVersion;
-		public JObject Content { get; set; }
+		public Document? Content { get; set; }
 
 		public delegate void ContentChanged();
 		public event ContentChanged OnContentChanged;
@@ -30,10 +27,10 @@ namespace DiffSync
 		public void ApplyLocalChange()
 		{
 			VersionedDocument shadowCopy = _serverDocument.Shadow; // Deal with locking later
-			var diff = (JToken)_differPatcher.Diff(shadowCopy.Document, Content);
+			var diff = shadowCopy.Document?.Diff(Content);
 			var edit = new Edit(_localId, new Guid(), shadowCopy.ClientVersion, shadowCopy.ServerVersion, diff);
 			_serverDocument.DocActions.Enqueue(edit);
-			_serverDocument.Shadow.Document = (JObject)Content.DeepClone();
+			_serverDocument.Shadow.Document = Content.Clone();
 			_serverDocument.Shadow.ClientVersion++;
 			_changeCommunicator.SendClientEdits(_serverDocument.DocActions);
 			OnContentChanged?.Invoke();
@@ -53,8 +50,8 @@ namespace DiffSync
 				{
 					RemoveAcknowledgedEdits(_serverDocument, remoteEdit);
 					ApplyEditToShadows(docEdit.ServerId, docEdit);
-					Content = (JObject)_differPatcher.Patch(Content, docEdit.Diff?.DeepClone());
-					var diff = (JObject?)_differPatcher.Diff(_serverDocument.Shadow.Document, Content);
+					Content = Document.Patch(Content, docEdit.Diff.Clone());
+					var diff = _serverDocument.Shadow.Document?.Diff(Content);
 					if (diff == null)
 					{
 						_serverDocument.DocActions.Enqueue(new ServerAck(_localId, Guid.Empty, _serverDocument.Shadow.ServerVersion));
@@ -72,9 +69,9 @@ namespace DiffSync
 				{
 					_serverDocument.Shadow.ServerVersion = _serverDocument.Backup.ServerVersion = resetEvent.ServerVersion;
 					_serverDocument.Shadow.ClientVersion = _serverDocument.Backup.ClientVersion = resetEvent.ClientVersion;
-					Content = (JObject)resetEvent.Content.DeepClone();
-					_serverDocument.Shadow.Document = (JObject)resetEvent.Content.DeepClone();
-					_serverDocument.Backup.Document = (JObject)resetEvent.Content.DeepClone();
+					Content = resetEvent.Content.Clone();
+					_serverDocument.Shadow.Document = resetEvent.Content.Clone();
+					_serverDocument.Backup.Document = resetEvent.Content.Clone();
 					_serverDocument.DocActions.Enqueue(new ServerAck(_localId, Guid.Empty, _serverDocument.Shadow.ServerVersion));
 					OnContentChanged?.Invoke();
 				}
@@ -119,7 +116,7 @@ namespace DiffSync
 		{
 			_serverDocument.Shadow.ClientVersion = docEdit.ClientVersion;
 			_serverDocument.Shadow.ServerVersion = docEdit.ServerVersion + 1;
-			_serverDocument.Shadow.Document = (JObject)_differPatcher.Patch(_serverDocument.Shadow.Document, docEdit.Diff?.DeepClone());
+			_serverDocument.Shadow.Document = Document.Patch(_serverDocument.Shadow.Document, docEdit.Diff.Clone());
 			BackupShadow(shadowId);
 		}
 

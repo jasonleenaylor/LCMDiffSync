@@ -30,7 +30,7 @@ namespace DiffSync.TestApp
 			_guid = Guid.NewGuid();
 			_documentManager = new ClientDocumentManager();
 			_changeCommunicator = new DirectChangeCommunicator(_documentManager);
-			_documentManager.InitializeServer(JObject.Parse("{'string':''}"), _changeCommunicator, _guid);
+			_documentManager.InitializeServer(new Document("{'string':''}"), _changeCommunicator, _guid);
 			_documentManager.OnContentChanged += ServerContentUpdate;
 			InitializeComponent();
 		}
@@ -38,9 +38,9 @@ namespace DiffSync.TestApp
 		private void ServerContentUpdate()
 		{
 			serverText.TextChanged -= TextBox_TextChanged;
-			if (serverText.Text != _documentManager.Content["string"]?.ToString())
+			if (serverText.Text != _documentManager.Content.GetString("string"))
 			{
-				serverText.Text = _documentManager.Content["string"]?.ToString();
+				serverText.Text = _documentManager.Content.GetString("string");
 			}
 			serverText.TextChanged += TextBox_TextChanged;
 			ClientViews.UpdateClientView(_documentManager.clientDocuments);
@@ -51,9 +51,9 @@ namespace DiffSync.TestApp
 			SetText(_documentManager.Content, serverText.Text);
 		}
 
-		private void SetText(JObject content, string textboxContent)
+		private void SetText(Document content, string textboxContent)
 		{
-			content["string"] = textboxContent;
+			content.SetString("string", textboxContent);
 		}
 
 		private void addClient_Click(object sender, RoutedEventArgs e)

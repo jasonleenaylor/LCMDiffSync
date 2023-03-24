@@ -8,6 +8,6 @@ namespace DiffSync
 	{
 		public long ClientVersion { get; }
 		public long ServerVersion { get; }
-		public JToken? Diff { get; }
+		public Diff Diff { get; }
 	}
 }

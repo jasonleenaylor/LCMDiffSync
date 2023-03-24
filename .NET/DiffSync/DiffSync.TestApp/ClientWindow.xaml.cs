@@ -23,7 +23,7 @@ namespace DiffSync.TestApp
 		private void HandleOnContentChange()
 		{
 			textBox.TextChanged -= TextBox_TextChanged;
-			textBox.Text = _serverDocumentManager.Content["string"]?.ToString();
+			textBox.Text = _serverDocumentManager.Content?.GetString("string") ?? "";
 			textBox.TextChanged += TextBox_TextChanged;
 			var tempDict = new Dictionary<Guid, DiffSyncDocument>();
 			tempDict[_serverDocumentManager.Guid] = _serverDocumentManager._serverDocument;
@@ -33,7 +33,7 @@ namespace DiffSync.TestApp
 
 		private void TextBox_TextChanged(object sender, TextChangedEventArgs e)
 		{
-			_serverDocumentManager.Content["string"] = textBox.Text;
+			_serverDocumentManager.Content.SetString("string", textBox.Text);
 			_serverDocumentManager.ApplyLocalChange();
 		}
 

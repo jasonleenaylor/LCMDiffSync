@@ -7,12 +7,12 @@ namespace DiffSync
 	{
 		public long ClientVersion { get; set; }
 		public long ServerVersion { get; set; }
-		public JObject? Document { get; set; }
+		public Document? Document { get; set; }
 		public object Clone()
 		{
 			return new VersionedDocument
 			{
-				Document = Document?.DeepClone() as JObject,
+				Document = Document?.Clone(),
 				ClientVersion = ClientVersion,
 				ServerVersion = ServerVersion
 			};
