@@ -51,11 +51,12 @@ namespace DiffSync
 		public void InitializeServer()
 		{
 			var catContent = "{'string':'cougar'}";
+			var contents = new Document(catContent);
 			var testDoc = new ClientDocumentManager();
 			// SUT
-			testDoc.InitializeServer(new Document(catContent), mockServerClientCommunicator.Object, Guid.NewGuid());
+			testDoc.InitializeServer(contents, mockServerClientCommunicator.Object, Guid.NewGuid());
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(0)); // No shadows created until clients are added
-			Assert.That(testDoc.Content.Diff(new Document(catContent)), Is.Null);
+			Assert.That(testDoc.Content.Diff(contents), Is.Null);
 		}
 
 		[Test]
@@ -156,7 +157,7 @@ namespace DiffSync
 		[Test]
 		public void InitFromServer()
 		{
-			var catContent = "{'string':'cougar'}";
+			var serverDoc = new Document("{'string':'cougar'}");
 			long serverVersion = 2013; // arbitrary
 			Guid serverId = Guid.NewGuid();
 			var testDoc = new ServerDocumentManager();
@@ -164,17 +165,17 @@ namespace DiffSync
 			mockClientServerCommunicator.Setup(x => x.RequestDump(It.IsAny<Guid>())).Callback((Guid guid) =>
 			{
 				var editStack = new Queue<IDocumentAction>();
-				editStack.Enqueue(new Reset(guid, serverId, 0, serverVersion, new Document(catContent)));
+				editStack.Enqueue(new Reset(guid, serverId, 0, serverVersion, serverDoc));
 				testDoc.ApplyRemoteChangesToClient(editStack);
 			});
 			// SUT
 			testDoc.InitFromServer(mockClientServerCommunicator.Object, testDoc.Guid);
 			mockClientServerCommunicator.Verify((x => x.RequestDump(It.IsAny<Guid>())), Times.Once);
-			Assert.That(testDoc.Content, Is.EqualTo(new Document(catContent)));
+			Assert.That(testDoc.Content, Is.EqualTo(serverDoc));
 			var shadow = testDoc.GetShadow(serverId);
 			Assert.That(shadow.ClientVersion, Is.EqualTo(0));
 			Assert.That(shadow.ServerVersion, Is.EqualTo(serverVersion));
-			Assert.That(shadow.Document, Is.EqualTo(new Document(catContent)));
+			Assert.That(shadow.Document, Is.EqualTo(serverDoc));
 		}
 
 		[Test]
