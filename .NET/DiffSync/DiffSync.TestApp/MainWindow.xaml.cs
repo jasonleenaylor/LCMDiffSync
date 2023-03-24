@@ -92,12 +92,10 @@ namespace DiffSync.TestApp
 			_clientManagers[clientId] = clientManager;
 		}
 
-		public void SendServerEdits(Queue<IDocumentAction> edits)
+		public void SendServerEdits(Guid clientId, Queue<IDocumentAction> edits)
 		{
-			foreach (var client in _clientManagers)
-			{
-				client.Value.ApplyRemoteChangesToClient(edits);
-			}
+			var clientDoc = _clientManagers[clientId];
+			clientDoc.ApplyRemoteChangesToClient(edits);
 		}
 	}
 }

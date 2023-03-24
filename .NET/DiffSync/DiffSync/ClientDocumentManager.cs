@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 
 namespace DiffSync
@@ -13,7 +14,6 @@ namespace DiffSync
 		public Dictionary<Guid, DiffSyncDocument> clientDocuments = new Dictionary<Guid, DiffSyncDocument>();
 		private IServerToClientCommunicator _changeCommunicator;
 		private Guid _localId;
-		private long _localVersion;
 		public Document Content { get; set; }
 		public delegate void ContentChanged();
 		public event ContentChanged OnContentChanged;
@@ -27,8 +27,12 @@ namespace DiffSync
 			return clientDocuments.Count;
 		}
 
-		private void ApplyClientEditToShadows(Guid clientId, IEdit docEdit)
+		private void ApplyClientEditToShadows(Guid clientId, IDocumentAction docEdit)
 		{
+			if (docEdit.Type != DocActionType.Edit)
+			{
+				throw new ArgumentException("Wrong IDocumentAction type sent for edit", nameof(docEdit));
+			}
 			if (!clientDocuments.TryGetValue(clientId, out var diffSyncDoc))
 			{
 				clientDocuments[clientId] = diffSyncDoc = new DiffSyncDocument();
@@ -54,58 +58,67 @@ namespace DiffSync
 			foreach (var remoteEdit in remoteEdits)
 			{
 				var diffSyncDoc = clientDocuments[remoteEdit.ClientId];
-				if (remoteEdit is IServerChangeAck)
+				switch (remoteEdit.Type)
 				{
-					RemoveAcknowledgedEdits(diffSyncDoc, remoteEdit);
-					continue;
-				}
-				if (remoteEdit is IEdit docEdit)
-				{
-					RemoveAcknowledgedEdits(diffSyncDoc, docEdit);
-					if (docEdit.ServerVersion != diffSyncDoc.Shadow.ServerVersion &&
-					    docEdit.ServerVersion == diffSyncDoc.Backup.ServerVersion)
+					case DocActionType.ServerAck:
 					{
-						// Client did not receive last response, roll back the shadow
-						diffSyncDoc.Shadow.Document = diffSyncDoc.Backup.Document?.Clone();
-						diffSyncDoc.Shadow.ServerVersion = diffSyncDoc.Backup.ServerVersion;
-						diffSyncDoc.DocActions.Clear();
+						RemoveAcknowledgedEdits(diffSyncDoc, remoteEdit);
+						continue;
 					}
-					if (diffSyncDoc.Shadow.ClientVersion == docEdit.ClientVersion &&
-					    diffSyncDoc.Shadow.ServerVersion == docEdit.ServerVersion)
+					case DocActionType.Edit:
 					{
-						ApplyClientEditToShadows(docEdit.ClientId, docEdit);
-						Content = Content.Patch(docEdit.Diff); // Should be fuzzy patch
-						var diff = clientDocuments[docEdit.ClientId].Shadow.Document?.Diff(Content);
+							RemoveAcknowledgedEdits(diffSyncDoc, remoteEdit);
+							if (remoteEdit.ServerVersion != diffSyncDoc.Shadow.ServerVersion &&
+							    remoteEdit.ServerVersion == diffSyncDoc.Backup.ServerVersion)
+							{
+								// Client did not receive last response, roll back the shadow
+								diffSyncDoc.Shadow.Document = diffSyncDoc.Backup.Document?.Clone();
+								diffSyncDoc.Shadow.ServerVersion = diffSyncDoc.Backup.ServerVersion;
+								diffSyncDoc.DocActions.Clear();
+							}
+							if (diffSyncDoc.Shadow.ClientVersion == remoteEdit.ClientVersion &&
+								 diffSyncDoc.Shadow.ServerVersion == remoteEdit.ServerVersion)
+							{
+								ApplyClientEditToShadows(remoteEdit.ClientId, remoteEdit);
+								Content = Content.Patch(remoteEdit.Diff); // Should be fuzzy patch
+								var diff = clientDocuments[remoteEdit.ClientId].Shadow.Document?.Diff(Content);
 
-						if (diff == null)
-						{
-							diffSyncDoc.DocActions.Enqueue(new ClientAck(docEdit.ClientId, _localId, docEdit.ClientVersion));
-						}
-						else
-						{
-							diffSyncDoc.DocActions.Enqueue(new Edit(docEdit.ClientId, _localId, docEdit.ClientVersion + 1,
-								docEdit.ServerVersion, clientDocuments[docEdit.ClientId].Shadow.Document.Diff(Content)));
-						} 
-						
-						if (!clientEditsProcessed.TryGetValue(remoteEdit.ClientId, out var hasDiff))
-							hasDiff = false;
-						clientEditsProcessed[remoteEdit.ClientId] = hasDiff || diff != null;
-						OnContentChanged?.Invoke();
+								// REVIEW: Is there a better way to handle this situation?
+								// Right now it covers both situations where we have made no edits, or where we both made the same edit
+								if (diff == null)
+								{
+									diffSyncDoc.DocActions.Enqueue(DocumentActionFactory.CreateClientAck(remoteEdit.ClientId, _localId, remoteEdit.ClientVersion));
+								}
+								else
+								{
+									diffSyncDoc.DocActions.Enqueue(DocumentActionFactory.CreateEdit(remoteEdit.ClientId, _localId, remoteEdit.ClientVersion + 1,
+										remoteEdit.ServerVersion, clientDocuments[remoteEdit.ClientId].Shadow.Document.Diff(Content)));
+								}
+
+								if (!clientEditsProcessed.TryGetValue(remoteEdit.ClientId, out var hasDiff))
+									hasDiff = false;
+								clientEditsProcessed[remoteEdit.ClientId] = hasDiff || diff != null;
+								OnContentChanged?.Invoke();
+							}
+							else if (diffSyncDoc.Shadow.ClientVersion > remoteEdit.ClientVersion)
+							{
+								// We already saw this edit, and can safely drop it
+							}
+							else
+							{
+								throw new ApplicationException($"versions drifted: c{diffSyncDoc.Shadow.ClientVersion} vs c{remoteEdit.ClientVersion} and s{diffSyncDoc.Shadow.ServerVersion} s{remoteEdit.ServerVersion}");
+							}
+
+							break;
 					}
-					else if(diffSyncDoc.Shadow.ClientVersion > docEdit.ClientVersion)
-					{
-						// We already saw this edit, and can safely drop it
-					}
-					else
-					{
-						throw new ApplicationException($"versions drifted: c{diffSyncDoc.Shadow.ClientVersion} vs c{docEdit.ClientVersion} and s{diffSyncDoc.Shadow.ServerVersion} s{docEdit.ServerVersion}");
-					}
+					default:
+						throw new ApplicationException("Unhandled IDocumentAction type");
 				}
 			}
 
 			foreach (var clientId in clientEditsProcessed)
 			{
-				_changeCommunicator.SendServerEdits(clientDocuments[clientId.Key].DocActions);
+				_changeCommunicator.SendServerEdits(clientId.Key, clientDocuments[clientId.Key].DocActions);
 				// There have been changes to the server text - so update our shadow
 				if (clientId.Value)
 				{
@@ -121,13 +134,9 @@ namespace DiffSync
 				return;
 
 			long serverVersion;
-			if (docAction is IEdit editAction)
+			if (docAction.Type == DocActionType.Edit || docAction.Type == DocActionType.ServerAck)
 			{
-				serverVersion = editAction.ServerVersion;
-			}
-			else if (docAction is IServerChangeAck clientAck)
-			{
-				serverVersion = clientAck.ServerVersion;
+				serverVersion = docAction.ServerVersion;
 			}
 			else
 			{
@@ -138,11 +147,11 @@ namespace DiffSync
 			diffSyncDoc.DocActions.Clear();
 			for (var i = 0; i < docActions.Count;)
 			{
-				var edit = docActions[i] as IEdit;
-				var reset = docActions[i] as Reset;
+				var action = docActions[i];
 				// remove any previous ServerAck from the queue as we'll likely be sending a new one
 				// also remove any edits which have been acknowledged
-				if (docActions[i] is ServerAck || edit != null && edit.ServerVersion <= serverVersion || reset != null && reset.ServerVersion <= serverVersion)
+				if (action.Type == DocActionType.ServerAck || action.Type == DocActionType.Edit && action.ServerVersion <= serverVersion
+				                                           || action.Type == DocActionType.Reset && action.ServerVersion <= serverVersion)
 				{
 					docActions.RemoveAt(i);
 					continue;
@@ -155,7 +164,6 @@ namespace DiffSync
 		public void InitializeServer(Document contents, IServerToClientCommunicator changeCommunicator, Guid myId)
 		{
 			Content = contents.Clone();
-			_localVersion = 0;
 			_localId = myId;
 			_changeCommunicator = changeCommunicator;
 		}
@@ -164,22 +172,22 @@ namespace DiffSync
 		public void SyncClient(Guid clientGuid)
 		{
 			var dumpStack = new Queue<IDocumentAction>();
-			dumpStack.Enqueue(new Reset(clientGuid, _localId, 0, _localVersion, Content.Clone()));
+			dumpStack.Enqueue(DocumentActionFactory.CreateReset(clientGuid, _localId, 0, 0, Content.Clone()));
 			// Create the backup and shadow for this client from the current content
 			clientDocuments[clientGuid] = new DiffSyncDocument(
 				new VersionedDocument
-					{ ClientVersion = 0, ServerVersion = _localVersion, Document = Content.Clone() },
+					{ ClientVersion = 0, ServerVersion = 0, Document = Content.Clone() },
 				new VersionedDocument
-					{ ClientVersion = 0, ServerVersion = _localVersion, Document = Content.Clone() },
+					{ ClientVersion = 0, ServerVersion = 0, Document = Content.Clone() },
 				dumpStack);
 	
-			_changeCommunicator.SendServerEdits(dumpStack);
+			_changeCommunicator.SendServerEdits(clientGuid, dumpStack);
 			OnContentChanged?.Invoke();
 		}
 
 		private void BackupShadow(Guid shadowId)
 		{
-			clientDocuments[shadowId].Backup =(VersionedDocument)clientDocuments[shadowId].Shadow.Clone();
+			clientDocuments[shadowId].Backup = (VersionedDocument)clientDocuments[shadowId].Shadow.Clone();
 		}
 	}
 }

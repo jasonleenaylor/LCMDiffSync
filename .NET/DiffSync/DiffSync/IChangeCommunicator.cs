@@ -12,6 +12,6 @@ namespace DiffSync
 
 	public interface IServerToClientCommunicator
 	{
-		void SendServerEdits(Queue<IDocumentAction> edits);
+		void SendServerEdits(Guid clientId, Queue<IDocumentAction> edits);
 	}
 }
