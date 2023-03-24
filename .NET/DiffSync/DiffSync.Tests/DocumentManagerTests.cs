@@ -25,8 +25,8 @@ namespace DiffSync
 
 			for (var i = 0; i < originals.Length; i++, clientVersion++)
 			{
-				editStack.Enqueue(new Edit
-					(clientGuid, serverGuid, clientVersion, serverVersion, Document.Diff(originals[i], updates[i])));
+				editStack.Enqueue(DocumentActionFactory.CreateEdit(clientGuid,
+					serverGuid, clientVersion, serverVersion, Document.Diff(originals[i], updates[i])));
 			}
 			return editStack;
 		}
@@ -36,14 +36,14 @@ namespace DiffSync
 			Guid serverGuid, Guid clientGuid)
 		{
 			var actions = new Queue<IDocumentAction>();
-			actions.Enqueue(new Reset(clientGuid, serverGuid, clientVersion, serverVersion, content.Clone()));
+			actions.Enqueue(DocumentActionFactory.CreateReset(clientGuid, serverGuid, clientVersion, serverVersion, content.Clone()));
 			return actions;
 		}
 
 		private Queue<IDocumentAction> GenerateClientAck(Guid clientId, Guid serverId, long clientVersion)
 		{
 			var actions = new Queue<IDocumentAction>();
-			actions.Enqueue(new ClientAck(clientId, serverId, clientVersion));
+			actions.Enqueue(DocumentActionFactory.CreateClientAck(clientId, serverId, clientVersion));
 			return actions;
 		}
 
@@ -72,7 +72,7 @@ namespace DiffSync
 			var shadow = serverDoc.GetShadow(clientGuid);
 			Assert.That(shadow.ClientVersion, Is.EqualTo(0));
 			Assert.That(shadow.ServerVersion, Is.EqualTo(0));
-			mockServerClientCommunicator.Verify(x=>x.SendServerEdits(
+			mockServerClientCommunicator.Verify(x=>x.SendServerEdits(It.Is<Guid>(g => g == clientGuid),
 				It.Is<Queue<IDocumentAction>>(s => s.Count == 1)), Times.Once);
 		}
 
@@ -94,7 +94,8 @@ namespace DiffSync
 			testDoc.ApplyRemoteChangesToServer(clientEditStack);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(1));
 			Assert.That(testDoc.GetShadow(clientGuid).ServerVersion, Is.EqualTo(0));
-			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Queue<IDocumentAction>>(s => ((IClientChangeAck)s.Peek()).ClientVersion == 0)), Times.Once);
+			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Guid>(g => g == clientGuid), 
+				It.Is<Queue<IDocumentAction>>(s => s.Peek().ClientVersion == 0)), Times.Once);
 		}
 
 		[Test]
@@ -116,7 +117,8 @@ namespace DiffSync
 			testDoc.ApplyRemoteChangesToServer(clientEditStack);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(1));
 			Assert.That(testDoc.GetShadow(clientGuid).ServerVersion, Is.EqualTo(1));
-			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Queue<IDocumentAction>>(s => ((IEdit)s.Peek()).ServerVersion == 0)), Times.Once);
+			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Guid>(g => g == clientGuid), 
+				It.Is<Queue<IDocumentAction>>(s => s.Peek().ServerVersion == 0)), Times.Once);
 		}
 
 		[Test]
@@ -141,7 +143,8 @@ namespace DiffSync
 			testDoc.ApplyRemoteChangesToServer(clientEditStack);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(1));
 			Assert.That(testDoc.GetShadow(clientGuid).ServerVersion, Is.EqualTo(1));
-			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Queue<IDocumentAction>>(s => ((IEdit)s.Peek()).ServerVersion == 0)), Times.Once);
+			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Guid>(g => g == clientGuid), 
+				It.Is<Queue<IDocumentAction>>(s => s.Peek().ServerVersion == 0)), Times.Once);
 			mockServerClientCommunicator.Invocations.Clear();
 			// Simulate dropped packet from server
 			var clientEditStack2 =
@@ -151,7 +154,8 @@ namespace DiffSync
 			testDoc.ApplyRemoteChangesToServer(clientEditStack2);
 			Assert.That(testDoc.GetClientCount(), Is.EqualTo(1));
 			Assert.That(testDoc.GetShadow(clientGuid).ServerVersion, Is.EqualTo(1));
-			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Queue<IDocumentAction>>(s => s.Count == 1 && ((IEdit)s.Peek()).ServerVersion == 0)), Times.Once);
+			mockServerClientCommunicator.Verify(x => x.SendServerEdits(It.Is<Guid>(g => g == clientGuid), 
+				It.Is<Queue<IDocumentAction>>(s => s.Count == 1 && s.Peek().ServerVersion == 0)), Times.Once);
 		}
 
 		[Test]
@@ -165,7 +169,7 @@ namespace DiffSync
 			mockClientServerCommunicator.Setup(x => x.RequestDump(It.IsAny<Guid>())).Callback((Guid guid) =>
 			{
 				var editStack = new Queue<IDocumentAction>();
-				editStack.Enqueue(new Reset(guid, serverId, 0, serverVersion, serverDoc));
+				editStack.Enqueue(DocumentActionFactory.CreateReset(guid, serverId, 0, serverVersion, serverDoc));
 				testDoc.ApplyRemoteChangesToClient(editStack);
 			});
 			// SUT
@@ -208,7 +212,7 @@ namespace DiffSync
 			testDoc.ApplyRemoteChangesToClient(GenerateTestReset(testJson, 0, 0, serverGuid, testDoc.Guid));
 			Assert.That(testDoc.GetShadow(serverGuid).ClientVersion, Is.EqualTo(0));
 			mockClientServerCommunicator.Verify(x => x.SendClientEdits(
-					It.Is<Queue<IDocumentAction>>(x => x.Count == 1 && x.Peek() is ServerAck)),
+					It.Is<Queue<IDocumentAction>>(x => x.Count == 1 && x.Peek().Type == DocActionType.ServerAck)),
 				Times.Once);
 			testDoc.ApplyRemoteChangesToClient(GenerateClientAck(testDoc.Guid, serverGuid, 0));
 			mockClientServerCommunicator.Invocations.Clear();
@@ -216,7 +220,7 @@ namespace DiffSync
 			testDoc.ApplyLocalChange();
 			Assert.That(testDoc.GetShadow(serverGuid).ClientVersion, Is.EqualTo(1));
 			mockClientServerCommunicator.Verify(x => x.SendClientEdits(
-				It.Is<Queue<IDocumentAction>>(x => x.Count == 1 && ((IEdit)x.Peek()).ClientVersion == 0)),
+				It.Is<Queue<IDocumentAction>>(x => x.Count == 1 && x.Peek().ClientVersion == 0)),
 				Times.Once);
 		}
 
