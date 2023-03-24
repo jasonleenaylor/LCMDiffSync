@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using JsonDiffPatchDotNet;
-using Newtonsoft.Json.Linq;
 
 namespace DiffSync
 {
@@ -12,12 +10,11 @@ namespace DiffSync
 	/// </summary>
 	public class ClientDocumentManager
 	{
-		private JsonDiffPatch differPatcher = new JsonDiffPatch(new Options {MinEfficientTextDiffLength = 2});
 		public Dictionary<Guid, DiffSyncDocument> clientDocuments = new Dictionary<Guid, DiffSyncDocument>();
 		private IServerToClientCommunicator _changeCommunicator;
 		private Guid _localId;
 		private long _localVersion;
-		public JObject Content { get; set; }
+		public Document Content { get; set; }
 		public delegate void ContentChanged();
 		public event ContentChanged OnContentChanged;
 
@@ -46,7 +43,7 @@ namespace DiffSync
 			{
 				diffSyncDoc.Shadow.ClientVersion = docEdit.ClientVersion + 1;
 				diffSyncDoc.Shadow.ServerVersion = docEdit.ServerVersion;
-				diffSyncDoc.Shadow.Document = (JObject)differPatcher.Patch(diffSyncDoc.Shadow.Document, docEdit.Diff?.DeepClone());
+				diffSyncDoc.Shadow.Document = diffSyncDoc.Shadow.Document.Patch(docEdit.Diff.Clone());
 				BackupShadow(clientId);
 			}
 		}
@@ -69,7 +66,7 @@ namespace DiffSync
 					    docEdit.ServerVersion == diffSyncDoc.Backup.ServerVersion)
 					{
 						// Client did not receive last response, roll back the shadow
-						diffSyncDoc.Shadow.Document = (JObject?)diffSyncDoc.Backup.Document?.DeepClone();
+						diffSyncDoc.Shadow.Document = diffSyncDoc.Backup.Document?.Clone();
 						diffSyncDoc.Shadow.ServerVersion = diffSyncDoc.Backup.ServerVersion;
 						diffSyncDoc.DocActions.Clear();
 					}
@@ -77,8 +74,8 @@ namespace DiffSync
 					    diffSyncDoc.Shadow.ServerVersion == docEdit.ServerVersion)
 					{
 						ApplyClientEditToShadows(docEdit.ClientId, docEdit);
-						Content = (JObject)differPatcher.Patch(Content, docEdit.Diff); // Should be fuzzy patch
-						var diff = (JObject?)differPatcher.Diff(clientDocuments[docEdit.ClientId].Shadow.Document, Content);
+						Content = Content.Patch(docEdit.Diff); // Should be fuzzy patch
+						var diff = clientDocuments[docEdit.ClientId].Shadow.Document?.Diff(Content);
 
 						if (diff == null)
 						{
@@ -87,7 +84,7 @@ namespace DiffSync
 						else
 						{
 							diffSyncDoc.DocActions.Enqueue(new Edit(docEdit.ClientId, _localId, docEdit.ClientVersion + 1,
-								docEdit.ServerVersion, (JObject)differPatcher.Diff(clientDocuments[docEdit.ClientId].Shadow.Document, Content)));
+								docEdit.ServerVersion, clientDocuments[docEdit.ClientId].Shadow.Document.Diff(Content)));
 						} 
 						
 						if (!clientEditsProcessed.TryGetValue(remoteEdit.ClientId, out var hasDiff))
@@ -112,7 +109,7 @@ namespace DiffSync
 				// There have been changes to the server text - so update our shadow
 				if (clientId.Value)
 				{
-					clientDocuments[clientId.Key].Shadow.Document = (JObject)Content.DeepClone();
+					clientDocuments[clientId.Key].Shadow.Document = Content.Clone();
 					clientDocuments[clientId.Key].Shadow.ServerVersion++;
 				}
 			}
@@ -155,9 +152,9 @@ namespace DiffSync
 			}
 		}
 
-		public void InitializeServer(JObject contents, IServerToClientCommunicator changeCommunicator, Guid myId)
+		public void InitializeServer(Document contents, IServerToClientCommunicator changeCommunicator, Guid myId)
 		{
-			Content = (JObject)contents.DeepClone();
+			Content = contents.Clone();
 			_localVersion = 0;
 			_localId = myId;
 			_changeCommunicator = changeCommunicator;
@@ -167,13 +164,13 @@ namespace DiffSync
 		public void SyncClient(Guid clientGuid)
 		{
 			var dumpStack = new Queue<IDocumentAction>();
-			dumpStack.Enqueue(new Reset(clientGuid, _localId, 0, _localVersion, (JObject)Content.DeepClone()));
+			dumpStack.Enqueue(new Reset(clientGuid, _localId, 0, _localVersion, Content.Clone()));
 			// Create the backup and shadow for this client from the current content
 			clientDocuments[clientGuid] = new DiffSyncDocument(
 				new VersionedDocument
-					{ ClientVersion = 0, ServerVersion = _localVersion, Document = (JObject)Content.DeepClone() },
+					{ ClientVersion = 0, ServerVersion = _localVersion, Document = Content.Clone() },
 				new VersionedDocument
-					{ ClientVersion = 0, ServerVersion = _localVersion, Document = (JObject)Content.DeepClone() },
+					{ ClientVersion = 0, ServerVersion = _localVersion, Document = Content.Clone() },
 				dumpStack);
 	
 			_changeCommunicator.SendServerEdits(dumpStack);

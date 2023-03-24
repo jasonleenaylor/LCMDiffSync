@@ -5,7 +5,7 @@ namespace DiffSync
 {
 	public class Reset : IDocumentAction
 	{
-		public Reset(Guid clientId, Guid serverId, long clientVersion, long serverVersion, JObject contents)
+		public Reset(Guid clientId, Guid serverId, long clientVersion, long serverVersion, Document contents)
 		{
 			ClientId = clientId;
 			ServerId = serverId;
@@ -13,7 +13,7 @@ namespace DiffSync
 			ServerVersion = serverVersion;
 			Content = contents;
 		}
-		public JObject Content { get; set; }
+		public Document Content { get; set; }
 
 		public long ClientVersion { get; }
 

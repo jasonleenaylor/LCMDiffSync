@@ -5,7 +5,7 @@ namespace DiffSync
 {
 	public class Edit : IEdit
 	{
-		public Edit(Guid clientId, Guid serverId, long clientVersion, long serverVersion, JToken diff)
+		public Edit(Guid clientId, Guid serverId, long clientVersion, long serverVersion, Diff? diff)
 		{
 			ClientId = clientId;
 			ServerId = serverId;
@@ -15,7 +15,7 @@ namespace DiffSync
 		}
 
 		public long ServerVersion { get; set; }
-		public JToken? Diff { get; set; }
+		public Diff? Diff { get; set; }
 		public long ClientVersion { get; set; }
 		public Guid ClientId { get; set; }
 		public Guid ServerId { get; set; }
