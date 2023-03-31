@@ -33,7 +33,7 @@ namespace DiffSync.TestApp
 
 		private void TextBox_TextChanged(object sender, TextChangedEventArgs e)
 		{
-			_serverDocumentManager.Content.SetString("string", textBox.Text);
+			_serverDocumentManager.Content.GetText("string").SetFromEvent(e, textBox.Text);
 			_serverDocumentManager.ApplyLocalChange();
 		}
 

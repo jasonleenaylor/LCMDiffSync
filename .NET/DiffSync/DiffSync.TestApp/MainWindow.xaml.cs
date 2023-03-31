@@ -48,12 +48,7 @@ namespace DiffSync.TestApp
 
 		private void TextBox_TextChanged(object sender, TextChangedEventArgs e)
 		{
-			SetText(_documentManager.Content, serverText.Text);
-		}
-
-		private void SetText(Document content, string textboxContent)
-		{
-			content.SetString("string", textboxContent);
+			_documentManager.Content.GetText("string").SetFromEvent(e, serverText.Text);
 		}
 
 		private void addClient_Click(object sender, RoutedEventArgs e)

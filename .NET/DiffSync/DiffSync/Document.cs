@@ -69,6 +69,18 @@ namespace DiffSync
             return _yMap.Get(field)?.ToString() ?? "";
         }
 
+        public YText GetText(string field)
+        {
+            var text = _yMap.Get(field) as YText;
+            if (text is null)
+            {
+                text = new YText();
+                _yMap.Set(field, text);
+            }
+
+            return text;
+        }
+
         public Document Clone()
         {
             return new Document(this);
