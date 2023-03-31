@@ -10,17 +10,15 @@ public static class YTextExtensions
     {
         foreach (var change in e.Changes)
         {
-            //todo according to the documentation both AddedLength and RemovedLength can be greater than 1, I'm not really sure
-            //how to solve that, but for our simple app this doesn't come up
-            if (change.AddedLength > 0 && change.RemovedLength > 0)
-                throw new NotSupportedException("characters both added and removed in the same event, not currently supported");
+            //if you select text and replace it with new text, the change will be a remove and an add in one change.
+            //if you select text and drag to move it somewhere else that will be 2 changes.
+            if (change.RemovedLength > 0)
+            {
+                text.Delete(change.Offset, change.RemovedLength);
+            }
             if (change.AddedLength > 0)
             {
                 text.Insert(change.Offset, newString.Substring(change.Offset, change.AddedLength));
-            }
-            else 
-            {
-                text.Delete(change.Offset, change.RemovedLength);
             }
         }
     }
